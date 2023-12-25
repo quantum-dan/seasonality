@@ -53,7 +53,18 @@ freezeit <- function(temperature) {
 }
 
 
-fit.sins <- function(data, mod=FALSE, aic=FALSE) {
+fit.sins <- function(data, mod=FALSE, aic=FALSE,
+                     erv=tibble(
+                       Intercept = NA,
+                       Amplitude = NA,
+                       FallDay = NA,
+                       WinterDay = NA,
+                       FallWinter = NA,
+                       SpringDay = NA,
+                       SummerDay = NA,
+                       SpringSummer = NA,
+                       R2 = NA
+                     )) {
   # Fit across all data.  Use three-sinusoid approach.  Data must have day
   # and temperature.
   # mod = return model instead of tibble, unless aic
@@ -63,71 +74,77 @@ fit.sins <- function(data, mod=FALSE, aic=FALSE) {
     summarize(temperature = mean(temperature, na.rm=T)) %>%
     drop_na() %>%
     arrange(day)
-  day <- inp$day
-  Ts <- inp$temperature
   
-  # First, fit the raw cosine.
-  index <- cos((day - 210) * 2 * pi / 365)
-  cosfit <- lm(Ts ~ index)$coefficients
-  meant <- cosfit[[1]]
-  amplitude <- cosfit[[2]] / meant
-  cospr <- 1 + index * amplitude
-  anomaly <- Ts/meant - cospr
-  
-  # Now identify coordinates for sines.
-  # Use rolling mean to find zeros and peaks.
-  rolled <- stats::filter(anomaly, rep(1/31, 31), circular=T)
-  
-  falld <- day[day >= 300]
-  fally <- rolled[day %in% falld]
-  fallt <- if (length(falld) > 0) mean(falld[fally == min(fally)][1]) else 330
-  
-  wind <- day[day <= 110]
-  winy <- rolled[day %in% wind]
-  wint <- if (length(wind) > 0) mean(wind[winy == max(winy)]) else 80
-  
-  spd <- day[day >= 120 & day <= 180]
-  spy <- rolled[day %in% spd]
-  spt <- if (length(spd) > 0) mean(spd[spy == min(spy)]) else 150
-  
-  sumd <- day[day >= 200 & day <= 240]
-  sumy <- rolled[day %in% sumd]
-  sumt <- if (length(sumd) > 0) mean(sumd[sumy == max(sumy)]) else 220
-  
-  # Define sine functions
-  # Domain = half of the gap between peaks before and after
-  sin1width <- round(((wint - fallt) %% 365)/2)
-  sin1dom <- c((fallt - sin1width):366, 1:(wint + sin1width))
-  
-  sin2width <- round((sumt - spt)/2)
-  sin2dom <- (spt - sin2width):(sumt + sin2width)
-  
-  sin1 <- -applysin(day, fallt - sin1width, sin1dom)
-  sin2 <- -applysin(day, spt - sin2width, sin2dom)
-  
-  fullfit <- lm((Ts - meant * cospr) ~ 0 + sin1 + sin2)
-  co <- fullfit$coefficients
-  
-  if (mod) {
-    # Return lm for fit comparison (AIC)
-    if (aic) {
-      tibble(
-        Sin = 2*(2 - as.numeric(logLik(lm(Ts ~ index)))),
-        Anom = 2*(8 - as.numeric(logLik(fullfit)))
-      )
-    } else fullfit
+  if (nrow(inp) < 180) {
+    warning("Insufficient data coverage for 3-sine fit")
+    erv
   } else {
-    tibble(
-      Intercept = meant,
-      Amplitude = amplitude * meant,
-      FallDay = fallt,
-      WinterDay = wint,
-      FallWinter = if (!is.na(co[[1]])) co[[1]] else 0,
-      SpringDay = spt,
-      SummerDay = sumt,
-      SpringSummer = co[[2]],
-      R2 = cor(Ts, (fullfit$fitted.values + meant * cospr))^2
-    )
+    day <- inp$day
+    Ts <- inp$temperature
+    
+    # First, fit the raw cosine.
+    index <- cos((day - 210) * 2 * pi / 365)
+    cosfit <- lm(Ts ~ index)$coefficients
+    meant <- cosfit[[1]]
+    amplitude <- cosfit[[2]] / meant
+    cospr <- 1 + index * amplitude
+    anomaly <- Ts/meant - cospr
+    
+    # Now identify coordinates for sines.
+    # Use rolling mean to find zeros and peaks.
+    rolled <- stats::filter(anomaly, rep(1/31, 31), circular=T)
+    
+    falld <- day[day >= 300]
+    fally <- rolled[day %in% falld]
+    fallt <- if (length(falld) > 0) mean(falld[fally == min(fally)][1]) else 330
+    
+    wind <- day[day <= 110]
+    winy <- rolled[day %in% wind]
+    wint <- if (length(wind) > 0) mean(wind[winy == max(winy)]) else 80
+    
+    spd <- day[day >= 120 & day <= 180]
+    spy <- rolled[day %in% spd]
+    spt <- if (length(spd) > 0) mean(spd[spy == min(spy)]) else 150
+    
+    sumd <- day[day >= 200 & day <= 240]
+    sumy <- rolled[day %in% sumd]
+    sumt <- if (length(sumd) > 0) mean(sumd[sumy == max(sumy)]) else 220
+    
+    # Define sine functions
+    # Domain = half of the gap between peaks before and after
+    sin1width <- round(((wint - fallt) %% 365)/2)
+    sin1dom <- c((fallt - sin1width):366, 1:(wint + sin1width))
+    
+    sin2width <- round((sumt - spt)/2)
+    sin2dom <- (spt - sin2width):(sumt + sin2width)
+    
+    sin1 <- -applysin(day, fallt - sin1width, sin1dom)
+    sin2 <- -applysin(day, spt - sin2width, sin2dom)
+    
+    fullfit <- lm((Ts - meant * cospr) ~ 0 + sin1 + sin2)
+    co <- fullfit$coefficients
+    
+    if (mod) {
+      # Return lm for fit comparison (AIC)
+      if (aic) {
+        tibble(
+          Sin = 2*(2 - as.numeric(logLik(lm(Ts ~ index)))),
+          Anom = 2*(8 - as.numeric(logLik(fullfit)))
+        )
+      } else fullfit
+    } else {
+      tibble(
+        Intercept = meant,
+        Amplitude = amplitude * meant,
+        FallDay = fallt,
+        WinterDay = wint,
+        FallWinter = if (!is.na(co[[1]])) co[[1]] else 0,
+        SpringDay = spt,
+        SummerDay = sumt,
+        SpringSummer = co[[2]],
+        R2 = cor(Ts, (fullfit$fitted.values + meant * cospr))^2
+      )
+    }
   }
 }
 
