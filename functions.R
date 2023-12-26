@@ -53,7 +53,7 @@ freezeit <- function(temperature) {
 }
 
 
-fit.sins <- function(data, mod=FALSE, aic=FALSE,
+fit.sins <- function(data, mod=FALSE, aic=FALSE, fixed=FALSE,
                      erv=tibble(
                        Intercept = NA,
                        Amplitude = NA,
@@ -69,6 +69,7 @@ fit.sins <- function(data, mod=FALSE, aic=FALSE,
   # and temperature.
   # mod = return model instead of tibble, unless aic
   # is true, in which case return tibble(sin, anomaly) with AICs
+  # Fixed: force summer day to 220, fall day to 330, and spring day to 160
   inp <- data %>%
     group_by(day) %>%
     summarize(temperature = mean(temperature, na.rm=T)) %>%
@@ -96,7 +97,7 @@ fit.sins <- function(data, mod=FALSE, aic=FALSE,
     
     falld <- day[day >= 300]
     fally <- rolled[day %in% falld]
-    fallt <- if (length(falld) > 0) mean(falld[fally == min(fally)][1]) else 330
+    fallt <- if (length(falld) > 0 & !fixed) mean(falld[fally == min(fally)][1]) else 330
     
     wind <- day[day <= 110]
     winy <- rolled[day %in% wind]
@@ -104,11 +105,11 @@ fit.sins <- function(data, mod=FALSE, aic=FALSE,
     
     spd <- day[day >= 120 & day <= 180]
     spy <- rolled[day %in% spd]
-    spt <- if (length(spd) > 0) mean(spd[spy == min(spy)]) else 150
+    spt <- if (length(spd) > 0 & !fixed) mean(spd[spy == min(spy)]) else 160
     
     sumd <- day[day >= 200 & day <= 240]
     sumy <- rolled[day %in% sumd]
-    sumt <- if (length(sumd) > 0) mean(sumd[sumy == max(sumy)]) else 220
+    sumt <- if (length(sumd) > 0 & !fixed) mean(sumd[sumy == max(sumy)]) else 220
     
     # Define sine functions
     # Domain = half of the gap between peaks before and after
@@ -143,9 +144,26 @@ fit.sins <- function(data, mod=FALSE, aic=FALSE,
         SummerDay = sumt,
         SpringSummer = co[[2]],
         R2 = cor(Ts, (fullfit$fitted.values + meant * cospr))^2
+        , RMSE = sqrt(mean(((fullfit$fitted.values + meant * cospr) - Ts)^2))
       )
     }
   }
+}
+
+fourier <- function(temps, N) {
+  M <- length(temps)
+  ft <- fft(temps)
+  # Discrete Fourier Transform: the "far end" are the complex conjugates of the
+  # "near end" and both ends are needed to reproduce the timeseries.  Only one
+  # end would need to be stored (complex conjugates, again), but with a real and
+  # complex part it still corresponds to 2N numbers.
+  ft <- c(ft[1:N], rep(0, M - 2*N), ft[(M-N+1):M])
+  ts <- Re(fft(ft, inverse=TRUE)) / M
+  ftr <- ft[1:N]
+  R2 <- cor(temps, ts)^2
+  RMSE <- sqrt(mean((ts - temps)^2))
+  names(ftr) <- paste0("Fourier", 1:N)
+  as_tibble_row(c(Mod(ftr), "R2" = R2, "RMSE" = RMSE))
 }
 
 normalize.sins <- function(data) {

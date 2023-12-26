@@ -226,6 +226,39 @@ fitted <- data %>%
     })
 ```
 
+## Fourier Elevation Comparison
+
+When `fixed` is TRUE (one extra variable), there is a very, very slight performance
+penalty to the 3-sin model (<0.003 for all buckets and typ. <0.001 median).  When
+`fixed` is FALSE (four extra variables), it has a small performance advantage for
+all buckets except 185-229 m, but growing with elevation (up to 0.009).  Adding
+a third harmonic (so two extra variables) reintroduces a small performance penalty
+(0.002-0.003).
+
+```{r warning=FALSE}
+fitted <- data %>%
+  group_by(id, day, elev) %>%
+  summarize(temperature = mean(temperature)) %>%
+  ungroup() %>%
+  bucketize("elev", "m", 10) %>%
+  group_by(id, BucketName) %>%
+  arrange(day) %>%
+  group_modify(~cbind(
+    fit.sins(.x, fixed=FALSE),
+    tibble(FR2 = fourier(.x$temperature, 3)$R2)))
+```
+
+
+```{r}
+fitted %>%
+  drop_na() %>%
+  group_by(BucketName) %>%
+  summarize(Gap = median(R2 - FR2),
+            across(c(R2, FR2),
+                   median))
+```
+
+
 ## Residual Plot
 
 ```{r}
@@ -561,15 +594,43 @@ data %>%
               quote="none")
 ```
 
-## Compare to Fourier Series
+## Compare to Fourier Transform
 
 ### 3S Model Performance Distribution
 
 ```{r}
 fitted <- data %>%
   group_by(id) %>%
-  
+  filter(length(unique(day)) >= 365) %>%
+  group_modify(~fit.sins(.x, fixed=TRUE)) %>%
+  ungroup()
 ```
+```{r}
+summary(fitted$R2)
+summary(fitted$RMSE)
+```
+### Fourier Transform
+
+```{r message=FALSE}
+foured <- data %>%
+  group_by(id, day) %>%
+  summarize(temperature = mean(temperature)) %>%
+  group_by(id) %>%
+  filter(length(unique(day)) >= 365) %>%
+  summarize(fourier(temperature, 2))
+
+summary(foured)
+```
+
+Note that the same amount of data is required when N=4 (real and imaginary part).
+
+For a median R2 of 0.98-0.99 (IQR 0.97-0.99) and RMSE of 0.78 C (0.58-1.07), about
+two terms are required (four numbers).  That's in comparison to fitting all four
+dates (eight numbers).  With `fixed=TRUE` (five numbers), it is 0.98 (0.96-0.99)
+and 0.87 (0.65-1.19), which still requires N=2 (five numbers vs four).
+
+An alternative approach is asymmetrical, since the first Fourier term doesn't
+wrap around.  However, this doesn't affect the behavior much.
 
 
 # Using the Model - For Science!
