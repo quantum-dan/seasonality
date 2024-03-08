@@ -78,7 +78,11 @@ fit.sins <- function(data, mod=FALSE, aic=FALSE, fixed=FALSE,
   
   if (nrow(inp) < 180) {
     warning("Insufficient data coverage for 3-sine fit")
-    erv
+    if (mod) {
+      if (aic) {
+        tibble(Sin = NA, Anom = NA)
+      } else NA
+    } else erv
   } else {
     day <- inp$day
     Ts <- inp$temperature
@@ -431,7 +435,6 @@ get.usgs <- function(id, start, end) {
       tibble(id=id, Date=NA, day=NA, temperature=NA)
     }
   )
-  
 }
 
 get.gageinfo <- function(gnums) {
@@ -484,30 +487,40 @@ validate.gages <- function(glist,
 
 states <- map_data("state")
 eco.raw <- if(!exists("eco.raw")) {
-  st_read("../TE2/Ecoregions/NA_CEC_Eco_Level1.shp", quiet=TRUE)
+  st_read(".Ecoregions/NA_CEC_Eco_Level1.shp", quiet=TRUE)
 } else eco.raw
 
-plot.eco <- function(akhi=F) {
+plot.eco <- function(akhi=F, vir.random=F, legrow=3) {
   ecos <- c("Northern Forests", "Eastern Temperate Forests", "Tropical Wet Forests", "Northwestern Forested Mountains", "Great Plains", "North American Deserts", "Mediterranean California", "Marine West Coast Forest", "Temperate Sierras", "Southern Semiarid Highlands")
   ecoreg <- eco.raw %>% st_transform("WGS84") %>%
     rename(ecoregion = NA_L1NAME) %>%
     mutate(ecoregion = str_to_title(ecoregion))
   ecoreg <- if (akhi) ecoreg else filter(ecoreg, ecoregion %in% ecos)
   plt <- ggplot(ecoreg) +
-    geom_sf(aes(fill=ecoregion), color=NA) +
-    geom_polygon(aes(long, lat, group=group), data=states, fill=NA,
-                 color="grey", size=1) +
+    geom_sf(aes(fill=if (vir.random) fct_shuffle(as.factor(ecoregion)) else ecoregion), color=NA) +
     scale_y_continuous(limits=c(
-      if (akhi) 15 else min(states$lat),
-      if (akhi) 75 else max(states$lat)
+      if (akhi) 18 else 25,
+      if (akhi) 72 else 50
     )) +
     scale_x_continuous(limits=c(
-      if (akhi) -165 else min(states$long),
-      max(states$long)
+      if (akhi) -170 else -125,
+      -60
     )) +
-    scale_fill_viridis_d()
-  # annotation_north_arrow(which_north = "grid", location="br") +
-  # annotation_scale(location="bl", height=unit(1, "cm"), text_cex=2)
+    (if (vir.random) {
+      scale_fill_viridis_d(begin = 0.3)
+    } else {
+      scale_fill_discrete(
+        # order: Arctic Cord,ETF, GP,Hudson Plain, MWCF, MC, NAD, NF, NWFM, SSH,
+        # Taiga, TS, Tropical Dry Forests, TWF, Tundra
+        type = c(
+          "#CCCCFF", "#AA22AA", "#999955", "#6060F0",
+          "#BBBBDD", "orange", "#FF6666", "#D5D5BC", "skyblue",
+          "lightpink", "#60AA60", "darkgrey", "darkgreen", "lightblue", "#CCEECC",
+          "#0000FF"
+        ),
+        guide = guide_legend(nrow=legrow, title.position = "top")
+      )
+    })
   
   plt
 }

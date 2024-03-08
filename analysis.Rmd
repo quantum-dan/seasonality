@@ -10,6 +10,7 @@ output: pdf_document
 ```{r setup, message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(message=FALSE, warning=FALSE)
 library(tidyverse)
+library(cowplot)
 source("functions.R")
 source("util.R")
 ```
@@ -54,7 +55,7 @@ summary(tg)
 
 For retrieving data about gages.  Format: `[[lon, lat], "id"],`
 
-```{r}
+```{r eval=FALSE}
 tg %>%
   mutate(
     r1 = paste0("[[", lon),
@@ -118,7 +119,7 @@ summary(temps)
 
 Quality control:
 
-```{r}
+```{r eval=FALSE}
 tqc <- temps %>%
   filter(temperature >= 0,
          temperature <= 100)
@@ -160,24 +161,26 @@ data %>%
 # Gage Timeseries Map
 
 ```{r}
-plt <- plot.eco(TRUE) +
-  scale_fill_viridis_d(option="magma", end=0.9) +
+plt <- plot.eco(TRUE, FALSE, 4) +
+  # scale_fill_viridis_d(option="magma", end=0.9) +
   geom_point(aes(lon, lat, size=tslen/365), data={
     left_join(data, tg, by=c("id"="site_no")) %>%
       group_by(id) %>%
       summarize(lon=first(lon),
                 lat=first(lat),
                 tslen=length(unique(Date)))
-  }, color="yellow") +
-  scale_color_viridis_c(begin=0.5) +
+  }, color="black") +
+  # scale_color_viridis_c(begin=0.5) +
   theme_std() +
+  theme(legend.position = "bottom",
+        legend.direction = "vertical") +
   labs(
     x="Longitude",
     y="Latitude",
     size="Timeseries Length (years)",
     fill="EPA Level I Ecoregion"
   )
-write.img(plt, "Figures/GageCovMap_ts")
+write.img(plt, "Figures/GageCovMap_ts", height=5)
 ```
 
 # Overview By Elevation
@@ -202,8 +205,10 @@ plt <- bucketize(data, "elev", "m", 10) %>%
   geom_line(size=2) +
   scale_color_viridis_d(option="magma", end=0.8) +
   scale_x_continuous(breaks=30*(0:12)) +
-  theme_std() +
-  theme(legend.position = "bottom") +
+  theme_std(size=36) +
+  theme(legend.position = "bottom",
+        axis.text = element_text(size=30),
+        legend.text = element_text(size=30)) +
   labs(x="Day of Year",
        y="Bucket Median Normalized Stream Temperature\n(30-Day Mean)",
        color="Elevation Bucket")
@@ -302,6 +307,17 @@ model does better; it is just a subtle enough effect not to be obvious unless
 specifically looked for.
 
 ```{r}
+fitted <- data %>%
+  sinu.resfit %>%
+  drop_na() %>%
+  bucketize("elev", "m", 10) %>%
+  group_by(id) %>%
+  group_modify(~{
+    left_join(.x, make.sints(fit.sins(.x)), by="day")
+    })
+```
+
+```{r}
 plt <- fitted %>%
   group_by(BucketName, day) %>%
   summarize(
@@ -345,17 +361,16 @@ perf <- fitted %>%
   drop_na() %>%
   group_by(id, day) %>%
   summarize(
-    across(c(ntemp, reftemp, ac.3sin, ac.5sin),
+    across(c(ntemp, reftemp, actemp),
            mean),
     BucketName = first(BucketName)
   ) %>%
   group_by(id) %>%
   summarize(
     BucketName = first(BucketName),
-    across(c(reftemp, ac.3sin, ac.5sin),
+    across(c(reftemp, actemp),
            ~cor(.x, ntemp)^2),
-    Delta3 = ac.3sin - reftemp,
-    Delta5 = ac.5sin - reftemp
+    Delta = actemp - reftemp
   ) %>%
   ungroup()
 ```
@@ -371,7 +386,7 @@ grows quite rapidly up to 90%, maxing out at a gap of almost 0.05.  This mirrors
 the visible behavior in the plots.
 
 ```{r}
-summary(select(perf, reftemp, ac.3sin, Delta3))
+summary(select(perf, reftemp, actemp, Delta))
 ```
 ```{r}
 perf %>%
@@ -571,14 +586,19 @@ aicda <- data %>%
 ```
 ```{r}
 summary(aicda)
-quantile(aicda$Delta, (1:100)/100)
+quantile(aicda$Delta, (1:100)/100, na.rm=T)
 ```
 ```{r}
-data %>%
+abkt <- data %>%
   bucketize("elev", "m", 10) %>%
   group_by(BucketName) %>%
   group_modify(~fit.sins(.x, TRUE, TRUE)) %>%
-  mutate(Delta = Anom - Sin) %>%
+  mutate(Delta = Anom - Sin)
+abkt
+```
+
+```{r}
+abkt %>%
   mutate(
     across(Sin:Delta, as.integer)
   ) %>%
@@ -593,6 +613,31 @@ data %>%
               eol="\\\\\n",
               quote="none")
 ```
+```{r}
+plt <- abkt %>%
+  rename(
+    `Sinusoidal Model`=Sin,
+    `Three-Sine Model`=Anom,
+    `Difference (Three-Sine minus Sinusoidal)`=Delta
+  ) %>%
+  pivot_longer(-BucketName) %>%
+  ggplot(aes(BucketName, value, fill=name)) +
+  geom_col(position="dodge") +
+  scale_fill_viridis_d(end=0.8,
+                        guide_legend(title="Model",
+                                     title.position="left",
+                                     direction = "horizontal")) +
+  theme_std() +
+  theme(legend.text = element_text(size=30)) +
+  theme(legend.position = "bottom") +
+  labs(
+    x = "Elevation Bucket",
+    y = "Akaike Information Criterion",
+    fill = "Model"
+  )
+write.img(plt, "Figures/AICBars", height=2.5)
+```
+
 
 ## Compare to Fourier Transform
 
@@ -641,176 +686,6 @@ data <- read_csv("Data/GageData.csv",
   drop_na
 ```
 
-## Geographic Clusters (Riverwise)
-
-```{r}
-rivers <- data %>%
-  group_by(id) %>%
-  group_modify(~cbind(.x, fit.sins(.x))) %>%
-  summarize(
-    across(da:elev, first),
-    across(c(temperature, Intercept:R2),
-           mean)
-  ) %>%
-  left_join(tg, by=c("id"="site_no"))
-```
-
-This is a great set of plots for showcasing the added information from the other
-seasonality parameters.  Many have clear spatial signals which do not align with
-the temperature-amplitude model.
-
-- Mean temperature is high in the south, at low elevation, and near the Gulf
-(duh).
-- Amplitude is high inland and north (duh).
-
-And then the new information:
-
-- The fall low is strong in the inland north, like amplitude, but it doesn't
-weaken as much as amplitude in the southern coastal regions.  Its strong areas
-also show a firmer boundary rather than a more gradual shift.
-- The timing of the spring low has a quite different pattern.  It hits earliest
-in the northeastern quarter of the country, latest in the southeast, and towards
-the middle in the west, though it is quite variable throughout.
-- The magnitude of the spring low, meanwhile, seems to be driven by elevation.  It
-is strongest in the Rockies and weakest in the low-elevation Southeast.  This
-corresponds to the observed seasonality plot.
-- Summer highs are strongest (but variable) in the west and weaker in the east.
-It seems likely this corresponds to the wet-winter/dry-summer regime typical
-of the west.
-- The winter high hits earliest further north and on the coasts, while it hits
-later to the south and inland.  This must have something to do with cold ocean influence,
-though it is unclear why this would affect timing.
-- The magnitude of the winter high is rather variable geographically, but it tends
-to be strongest inland and weaker on the coasts.  Particularly strong points seem
-to be concentrated in the western Rockies and eastern Sierra or in the parts of the
-Basin and Range close to those mountain ranges.
-
-
-```{r}
-states <- map_data("state")
-plt <- rivers %>%
-  group_by(id) %>%
-  group_modify(~normalize.sins(.x)) %>%
-  ungroup() %>%
-  filter(lon > -130) %>%
-  pivot_longer(c(temperature, Amplitude:SpringSummer),
-               names_to="Aspect",
-               values_to="Value") %>%
-  group_by(Aspect) %>%
-  mutate(Value = (Value - mean(Value))/sd(Value)) %>%
-  ggplot() +
-  geom_polygon(aes(long, lat, group=group), data=states, color="grey",
-               fill=NA, size=2) +
-  geom_point(aes(lon, lat, color=Value), size=2) +
-  scale_color_viridis_c(limits=c(-3, 3)) +
-  facet_wrap(~Aspect, nrow=2, labeller=as_labeller(renamer)) +
-  theme_std() +
-  labs(
-    x="Longitude",
-    y="Latitude",
-    color="Normalized\nSeasonality\nParameter"
-  )
-print(plt + theme_std(12))
-write.img(plt, "Figures/RiverSeasonMaps")
-```
-
-A final point to investigate would be clustering.
-
-### Formal Clustering
-
-Using k-means and the following cluster counts: (note that there are always
-numerous exceptions)
-
-2. Cluster 2 dominates the west coast mountains, Northeast, and Great Lakes, with
-a significant minority presence in the Rockies.  Cluster 1 dominates elsewhere.
-3. Cluster 2 is divided into Clusters 1 and 2, with 2 taking over in the Cascades.
-Cluster 3 overlaps well with the former Cluster 1.
-4. Cluster 3 now divides into Clusters 3 and 4.  3 is more dominant in the west.
-5. The previous pattern is largely unchanged.  The new Cluster 5 is widely but
-sparsely distributed.
-
-6 onwards provide little new information.  From 2-4, it appears that key regions are:
-
-1. West Coast mountains, Northeast, and Great Lakes; from which the Cascades,
-especially the northern Cascades, can be separated.
-2. South and inland North, which can be further divided into the Rockies plus the
-Southeast versus the Midwest and the rest of the East.
-
-It may be interesting to generate plots of the mode in a moving window for the 
-k=2 and k=4 maps (or just k=4).
-
-```{r}
-for (k in 2:10) {
-  rivers$cluster <- as.factor(kmeans(select(rivers, temperature, Amplitude:SpringSummer),
-                           k)$cluster)
-  plt <- ggplot(filter(rivers, lon > -130), aes(lon, lat, color=cluster)) +
-    geom_polygon(aes(long, lat, group=group), data=states, color="grey",
-               fill=NA, size=2) +
-    geom_point(size=2) +
-    scale_color_viridis_d() +
-    theme_std() +
-    labs(
-      x="Longitude",
-      y="Latitude",
-      color="Seasonality\nCluster"
-    )
-  write.img(plt, paste0("Figures/RiverwiseClusters/Clusters_k", k))
-}
-```
-
-Unfortunately, this summary approach is quite noisy.  Best to stick to individual
-points.
-
-
-```{r}
-rivers$cluster <- as.factor(kmeans(select(rivers, temperature, amplitude, WX:FY),
-                           4)$cluster)
-```
-
-```{r}
-getmode <- function(v) {
-   uniqv <- unique(v)
-   uniqv[which.max(tabulate(match(v, uniqv)))]
-}
-
-plt <- ggplot() +
-  geom_polygon(aes(long, lat, group=group), data=states, color="black",
-               fill=NA, size=2) +
-  stat_summary_2d(aes(lon, lat, z=cluster), data=filter(rivers, lon > -130),
-                  fun=getmode, bins=20, alpha=0.8) +
-  scale_fill_viridis_d() +
-  theme_std() +
-  labs(
-    x="Longitude",
-    y="Latitude",
-    fill="Dominant\nSeasonality\nCluster"
-  )
-write.img(plt, "Figures/RiverwiseClusters/ModalCluster")
-```
-
-### Analysis of River Trends
-
-```{r}
-rivers %>%
-  pivot_longer(
-    c(Intercept, Amplitude, FallWinter, SpringSummer),
-    names_to="Ssn",
-    values_to="Sv"
-  ) %>%
-  pivot_longer(c(lat, lon, elev, da),
-               names_to="Riv",
-               values_to="Rv") %>%
-  ggplot(aes(Rv, Sv)) +
-  geom_point(alpha=0.1, stroke=NA) +
-  theme_bw() +
-  facet_grid(Ssn ~ Riv,
-             switch="both",
-             scales="free") +
-  labs(x=NULL, y=NULL)
-```
-
-
-
 ## Geographic Trends
 
 ### Moving Window
@@ -823,7 +698,7 @@ geo <- filter(left_join(data, tg, by=c("id"="site_no")), lon >= -130) %>%
   drop_na
 ```
 
-```{r}
+```{r warning=FALSE}
 lons <- (-130):(-65)
 lats <- 25:50
 width <- 2
@@ -850,6 +725,7 @@ geossn <- map_dfr(lons,
                               } else tibble()
                             })
                   })
+write_csv(geossn, "Data/GeoWindow.csv")
 ```
 
 
@@ -857,6 +733,7 @@ Some variables range quite substantially by location.  For example, the spring
 low and winter high can range from negligible to a large fraction of an amplitude.
 
 ```{r}
+geossn <- read_csv("Data/GeoWindow.csv", show_col_types=F)
 summary(geossn)
 ```
 
@@ -873,7 +750,7 @@ a much larger proportion of mean temperatures in the fall/winter.
  inland.  The anomaly can likewise reach 20-40% of mean temperatures.
 
 ```{r}
-geossn <- select(geossn, -any_of(c("R2", "Intercept")))
+geossn <- select(geossn, -any_of(c("R2", "RMSE", "temperature")))
 states <- map_data("state")
 for (nm in names(geossn)[-(1:2)]) {
   plt <- ggplot(geossn,
@@ -881,8 +758,12 @@ for (nm in names(geossn)[-(1:2)]) {
     geom_polygon(aes(long, lat, group=group), data=states, color="black",
                  fill=NA, size=2) +
     geom_tile(alpha=0.9) +
-    scale_fill_viridis_c() +
+    scale_fill_viridis_c(
+      guide = guide_colorbar(barwidth=unit(400, "points"),
+                                               barheight=unit(50, "points"))
+    ) +
     theme_std() +
+    theme(legend.position = "bottom") +
     labs(
       x="Longitude",
       y="Latitude",
@@ -893,19 +774,22 @@ for (nm in names(geossn)[-(1:2)]) {
 
 plt <- geossn %>%
   mutate(
-    across(temperature:SpringSummer,
-           ~(.x - mean(.x))/sd(.x))
+    across(Intercept:SpringSummer,
+           ~(.x - mean(.x, na.rm=T))/sd(.x, na.rm=T))
   ) %>%
-  pivot_longer(temperature:SpringSummer,
+  pivot_longer(Intercept:SpringSummer,
                names_to="Aspect",
                values_to="Value") %>%
   ggplot(aes(lon, lat, fill=Value)) +
   geom_polygon(aes(long, lat, group=group), data=states, color="black",
                  fill=NA, size=2) +
   geom_tile(alpha=0.9) +
-  scale_fill_viridis_c(limits=c(-3, 3)) +
+  scale_fill_viridis_c(limits=c(-3, 3),
+                       guide = guide_colorbar(barwidth=unit(400, "points"),
+                                               barheight=unit(50, "points")))+
   facet_wrap(~Aspect, nrow=2, labeller = as_labeller(renamer)) +
   theme_std() +
+  theme(legend.position = "bottom") +
   labs(
     x="Longitude",
     y="Latitude",
@@ -913,6 +797,245 @@ plt <- geossn %>%
   )
 write.img(plt, "Figures/MovingWindowSeasons/All")
 ```
+
+### Timing Trends
+
+The identified timing trends are difficult to read in text, so we make some plots
+of them.  Trends to plot:
+
+- The winter-high is more or less binary between early and late, occurring early
+in the Pacific Northwest, northern Rockies, upper Midwest, and far Northeast, and
+late elsewhere.  This can be loosely captured by a division around 42 N, though
+there are several exceptions.
+- The summer-high has three discrete regions.  It is early in the Mountain West,
+Great Plains, and Upper Midwest; middling in the Pafific Northwest; and late in the
+East and Southeast (again, with exceptions).  The main dividing lines are two
+diagonals: 30/-105 to 42/-85 (East/Central) and 40/-123 to 50/-110 (Central/PNW).
+- The spring-low divides into East (late, east of -105 and south of 42); Northern
+East (early, east of -105 and north of 42); and West (middling, west of -105).
+- The autumn-low more or less has an early zone in the north except for the PNW
+(-115 eastwards, north of 40) and is middling to late elsewhere.
+
+```{r}
+regions <- geossn %>%
+  pivot_longer(ends_with("Day"),
+               names_to="Which",
+               values_to="Day",
+               names_pattern = "([A-Za-z]+)Day") %>%
+  mutate(
+    Which = ifelse(Which == "Fall", "Autumn", Which),
+    Zone = case_match(
+      Which,
+      "Spring" ~ case_when(
+        lon > -105 & lat < 42 ~ "East",
+        lon > -105 & lat >= 42 ~ "Northern East",
+        .default = "West"
+      ),
+      "Summer" ~ case_when(
+        # East/Central line: +12 over +20 -> y = 0.6x + 93
+        lat < 0.6 * lon + 93 ~ "Southeast",
+        # Central/PNW: +10 over 13 -> y = 10/13x + (50 + 10/13 * 110)
+        lat > 10 / 13 * lon + 50 + 10 / 13 * 110 ~ "Northwest",
+        .default = "Central"
+      ),
+      "Autumn" ~ ifelse(lon > -115 &
+                          lat > 40, "North", "South/Northwest"),
+      "Winter" ~ ifelse(lat > 42, "North", "South")
+    )
+  )
+```
+
+Combined regions:
+
+- Upper Midwest = Autumn North/Winter North/Spring Northern East/Summer Central
+- Northeast = AN/WN/SNE/Summer Southeast
+- Northern Rockies = AN/WN/Spring West/Summer Central
+- Tiny slice of Northern Rockies = AN/WN/SW/Summer Northwest
+- Mid-latitude East = four blocks: AN/Winter South/Spring (Northern East/East)/Summer (Central/Southeast)
+- Mid-latitude Rockies = AN/WS/SW/SC
+- PNW = Autumn Northwest/Winter North/Spring West/Summer (Central/Northwest)
+- Southeast = Autumn South/Winter South/Spring East/Summer Southeast
+- Central South = AS/WS/SE/Summer Central
+- Southwest = AS/WS/Spring West/Summer (Central/Northwest)
+
+Proposed relumping:
+
+```{r}
+regions <- geossn %>%
+  pivot_longer(ends_with("Day"),
+               names_to="Which",
+               values_to="Day",
+               names_pattern = "([A-Za-z]+)Day") %>%
+  mutate(
+    Which = ifelse(Which == "Fall", "Autumn", Which),
+    Zone = case_when(
+      # Midwestern and Eastern Zones
+      lon > -105 ~ case_when(
+        lat >= 0.6 * lon + 93 ~ case_when(
+          lon > -105 & lat > 40 ~ "Northern Midwest",
+          .default = "Southern Midwest"
+        ),
+        lat > 40 ~ "Northeast",
+        .default = "Southeast"
+      ),
+      # Northern West
+      lat > 42 ~ case_when(
+        lon > -115 ~ "Northern Rocky Mountains",
+        .default = "Pacific Northwest"
+      ),
+      .default = case_when(
+        lat > 40 & lon > -115 ~ "Central Rocky Mountains",
+        .default = "Southwest"
+      )
+    )
+  )
+```
+
+
+```{r}
+reggrp <- regions %>%
+  group_by(lon, lat) %>%
+  # summarize(AllReg = paste(unique(paste(Which, Zone)), collapse=" | "))
+  summarize(AllReg = first(Zone))
+
+plt <- ggplot(reggrp, aes(lon, lat, fill=AllReg)) +
+  scale_fill_viridis_d() +
+  geom_tile() +
+  geom_polygon(aes(long, lat, group=group), data=states, color="black",
+                 fill=NA, size=2) +
+  theme_std() +
+  labs(
+    x="Longitude",
+    y="Latitude",
+    fill="Seasonality\nRegion"
+  )
+write.img(plt, "Figures/MovingWindowSeasons/SeasonalityRegions")
+```
+
+
+```{r}
+plt <- regions %>%
+  ggplot(aes(Zone, as.Date(paste("2000", Day), format="%Y %j"),
+             color=Zone)) +
+  geom_boxplot() +
+  scale_color_viridis_d() +
+  coord_flip() +
+  scale_y_date(labels=scales::date_format("%b"),
+               date_breaks="1 month") +
+  facet_wrap(~Which, scales="free_y", ncol=1) +
+  labs(x="Timing Zone", y="Anomaly Peak Day") +
+  theme_std() +
+  guides(color="none")
+write.img(plt, "Figures/MovingWindowSeasons/RegionDateBoxes")
+```
+
+#### Alternative Trends: Clusters
+
+With 5 clusters, there are:
+
+1. Mountain
+2. Boundary of warm
+3. Cold continental
+4. Warm
+5. Cold and wet
+
+(2) is sort of redundant with (3), which suggests that 4 clusters might be better.
+
+With 4, there are:
+
+1. Mountain (+NY): cold, large spring/summer anomaly, highly variable summer 
+high, early winter high
+2. Continental (+some coastal): average on everything
+3. Warm: low anomaly coefficients, warm, low amplitude
+4. Cold north: cold, large autumn/winter anomaly, largest amplitude, early seasons
+
+```{r}
+nona <- drop_na(geossn)
+normed <- nona %>%
+  mutate(across(Intercept:SpringSummer, ~(.x - mean(.x))/sd(.x))) %>%
+  select(Intercept:SpringSummer)
+
+tree <- hclust(dist(normed), "ward.D")
+nona$Cluster <- cutree(tree, 4)
+```
+
+```{r}
+cluster.names <- c(
+  "Mountain",
+  "Continental",
+  "Warm",
+  "Cold North"
+)
+
+plt_map <- ggplot(nona, aes(lon, lat, fill=cluster.names[Cluster])) +
+  geom_tile() +
+  geom_polygon(aes(long, lat, group=group), data=states, color="black",
+                 fill=NA, size=2) +
+  scale_fill_viridis_d(option="plasma", end=0.8) +
+  theme_std() +
+  theme(legend.position = "bottom") +
+  labs(
+    x="Longitude",
+    y="Latitude",
+    fill="Seasonality Cluster"
+  )
+write.img(plt_map, "Figures/MovingWindowSeasons/Clusters")
+```
+
+```{r}
+plt <- nona %>%
+  pivot_longer(Intercept:SpringSummer,
+               names_to="Parameter",
+               values_to="Value") %>%
+  ggplot(aes(cluster.names[Cluster], Value, color=cluster.names[Cluster])) +
+  geom_boxplot(size=2) +
+  scale_color_viridis_d(option="plasma", end=0.8) +
+  facet_wrap(~Parameter, ncol=4, scales="free_y",
+             labeller = as_labeller(renamer),
+             strip.position = "left") +
+  labs(y=NULL, x="Cluster") +
+  theme_vert() +
+  guides(color="none")
+write.img(plt, "Figures/MovingWindowSeasons/ClusterBoxes")
+```
+```{r}
+plt_box <- nona %>%
+  pivot_longer(ends_with("Day"),
+               names_to="Parameter",
+               values_to="Value") %>%
+  mutate(Parameter = factor(Parameter,
+                            levels = c(
+                              "WinterDay", "SpringDay", "SummerDay", "FallDay"
+                            ))) %>%
+  ggplot(aes(cluster.names[Cluster], Value, color=cluster.names[Cluster])) +
+  geom_boxplot(size=2) +
+  scale_y_continuous(limits = \(lims) {
+    l <- lims[1]
+    h <- lims[2]
+    c(l, max(h, l + 70))
+  },
+  breaks = \(lims) {
+    minv <- floor(lims[1] / 20)
+    maxv <- floor(lims[2] / 20)
+    20 * (minv:maxv)
+  }) +
+  scale_color_viridis_d(option="plasma", end=0.8) +
+  facet_wrap(~Parameter, ncol=3, scales="free_y",
+             labeller = as_labeller(renamer),
+             strip.position = "left") +
+  labs(y=NULL, x="Cluster") +
+  theme_vert() +
+  guides(color="none")
+write.img(plt_box, "Figures/MovingWindowSeasons/ClusterBoxDates")
+```
+
+```{r}
+plt_map <- plt_map + theme_std(32)
+# aligned <- align_plots(plt_box, plt_map, axis="br")
+aligned <- ggdraw(plt_box) + draw_plot(plt_map, x=0.4, width=0.6, height=0.4)
+write.img(aligned, "Figures/MovingWindowSeasons/ClusterWithInset")
+```
+
 
 ### Elevation (100 m)
 
@@ -1003,526 +1126,7 @@ write.img(plt, "Figures/ElevationTrends")
 
 
 
-## Temporal Trends (Rolling Mean)
-
-### Long Term Data
-
-```{r}
-# minyr <- 2010
-
-datats <- map_dfr(c(1990, 2000, 2010),
-                  function(minyr) {
-                    data %>%
-                      drop_na() %>%
-                      group_by(id) %>%
-                      mutate(Year = as.integer(format(Date, "%Y")),
-                             MinYear = min(Year),
-                             MaxYear = max(Year)) %>%
-                      ungroup() %>%
-                      filter(MinYear <= minyr,
-                             MaxYear >= 2022) %>%
-                      filter(Year >= minyr,
-                             Year <= 2022) %>%
-                      mutate(StartYr = minyr)
-                  })
-
-datats %>%
-  group_by(StartYr) %>%
-  summarize(N = length(unique(id)))
-```
-
-
-### By River
-
-```{r warning=FALSE}
-window <- 10  # years
-trends <- datats %>%
-  group_by(id, day) %>%
-  arrange(Date) %>%
-  mutate(
-    temperature = zoo::rollmean(temperature, window, fill=NA, align="left")
-  ) %>%
-  ungroup() %>%
-  drop_na() %>%
-  group_by(id, Year = as.integer(format(Date, "%Y"))) %>%
-  arrange(Date) %>%
-  group_modify(~{
-    tryCatch({add.resfit(add.sinusoid(.x)) %>%
-      summarize(
-        across(da:elev, first),
-        temperature = mean(temperature),
-        across(c(amplitude, WX:FY),
-               mean),
-        R2 = cor(RefMod, cycle.temp)^2
-      )
-    },
-    error=function(e) tibble())}, .keep=TRUE) %>%
-  drop_na()
-```
-
-```{r}
-tcor.wide <- trends %>%
-  group_by(id) %>%
-  summarize(
-    across(temperature:FY,
-           ~safely(cor, otherwise=0)(Year, ., method="spearman")$result)
-  ) %>% drop_na
-```
-
-
-```{r}
-tcors <- trends %>%
-  pivot_longer(temperature:FY,
-               names_to="Aspect",
-               values_to="Value") %>%
-  group_by(id, Aspect) %>%
-  summarize(
-    Cor = safely(cor, otherwise=0)(Year, Value, method="spearman")$result,
-    p = safely(cor.test, otherwise=list(p.value=1))(Year, Value, method="spearman")$result$p.value,
-    len = n()
-  ) %>%
-  filter(p < 0.05)
-
-tcors %>%
-  arrange(-abs(Cor))
-```
-
-Compare what we see with just mean-amplitude versus what we see with more data.
-Also make a map.
-
-#### Histogram
-
-```{r}
-plt <- ggplot(tcors, aes(Cor)) +
-  geom_histogram(bins=10) +
-  facet_wrap(~Aspect, labeller = as_labeller(\(x) paste0("Cor(Start Year, ", renamer[x], ")")),
-             strip.position = "bottom", nrow=2) +
-  theme_std() +
-  labs(
-    x=NULL,
-    y="River Count"
-  )
-
-print(plt + theme_std(12))
-write.img(plt, "Figures/SignificantCorrelations_Temporal_ByRiver")
-```
-
-#### Cross-Scatterplots
-
-To illustrate, make scatterplots of correlations against each other.  It is very
-interesting to see. Some have no visible correlation between correlations; for
-example, most rivers are increasing in mean temperature, but many of those do
-*not* have a further increasing summer high.  On the other hand, quite strong
-cross-correlations do exist.  Strengthening spring lows correlate with strengthening
-winter highs, which in turn correlate with strengthening fall lows.  Strengthening
-fall lows also correlate with later spring lows.  And so on.
-
-Note that lows (fall/spring) are strengthening with a negative correlation.
-
-```{r}
-nms <- names(tcor.wide)[-1]
-for (nm1 in nms) {
-  for (nm2 in nms[nms > nm1]) {
-    x <- tcor.wide[[nm1]]
-    y <- tcor.wide[[nm2]]
-    plt <- ggplot(mapping = aes(x, y)) +
-      geom_point(size=2) +
-      theme_std() +
-      labs(x=paste0("Cor(Start Year, ", renamer[nm1], ")"),
-           y=paste0("Cor(Start Year, ", renamer[nm2], ")"))
-    write.img(plt, paste0("Figures/RiverTemporalCorScatters/", nm1, "_", nm2))
-  }
-}
-```
-
-
-Of the 28 combinations, 22 have statistically significant cross-correlations.
-
-Of note:
-
-- (SuY, amplitude) - temperature: negative - warming rivers have a weaker summer high
-and weaker swings in general.
-- (amplitude, SuY) - WY: positive - more variable rivers with a warmer summer have a
-stronger winter high.
-- FY - (temperature, WY): (negative, positive) - rivers with a deeper fall low
-are warmer but have a weaker winter high
-- SpY - WY: positive - rivers with a stronger spring low have a weaker winter high
-- FY - SpY: positive - both strengthen
-
-```{r}
-nms <- names(tcor.wide)[-1]
-xcor <- map_dfr(nms,
-                function(nm1) {
-                  map_dfr(nms[nms > nm1],
-                          function(nm2) {
-                            tibble(Var1=nm1,
-                                   Var2=nm2,
-                                   XCor=cor(tcor.wide[[nm1]],
-                                            tcor.wide[[nm2]],
-                                            method="spearman"),
-                                   p=cor.test(tcor.wide[[nm1]],
-                                            tcor.wide[[nm2]],
-                                            method="spearman")$p.value)
-                          })
-                })
-arrange(xcor, -abs(XCor))
-```
-
-
-#### Map
-
-Must load `tg` from data retrieval for coordinates.
-
-```{r}
-tc.info <- trends %>%
-  group_by(id) %>%
-  summarize(
-    across(c(da:elev), first),
-    across(temperature:FY,
-           ~safely(cor, otherwise=0)(Year, ., method="spearman")$result)
-  ) %>%
-  drop_na %>%
-  left_join(
-    select(tg, -tslen),
-    by=c("id"="site_no")
-  )
-```
-
-Assess general geographic trends.  There are notable latitude correlations with
-WX trends, longitude with FY, temperature, amplitude, and SpY trends, and altitude
-with WX trends.
-
-Longitude correlates with most things, so it's worth plotting all of them.
-
-```{r}
-tc.info %>%
-  summarize(across(temperature:FY,
-                   ~cor(., lon)))
-```
-
-In general, regional trends in time overlap relatively well between the sinusoid
-model and the anomaly model.  It is at a more local scale where differences become
-evident.
-
-```{r}
-states <- map_data("state")
-
-plt <- tc.info %>%
-  filter(lat < 50) %>%
-  pivot_longer(temperature:FY,
-               names_to="Aspect",
-               values_to="Cor") %>%
-  ggplot() +
-  geom_polygon(aes(long, lat, group=group), data=states, size=2, color="grey",
-               fill=NA) +
-  stat_summary_2d(aes(lon, lat, z=Cor), bins=20) +
-  scale_fill_viridis_c() +
-  facet_wrap(~Aspect, nrow=2, labeller=as_labeller(renamer)) +
-  theme_std() +
-  labs(
-    x="Longitude",
-    y="Latitude",
-    fill="Cor(Start Year, Variable)"
-  )
-
-print(plt + theme_std(12))
-write.img(plt, "Figures/RiverTemporalCorMap")
-```
-
-#### Clustering
-
-2. No obvious spatial trend.
-3. Cluster 2 is relatively rare inland and more common on the west coast.
-4. Similarly (now Cluster 4).
-Etc.
-
-It appears that there is one sort of trend that is prevalent nearer the coasts,
-and otherwise no obvious pattern.
-
-```{r}
-states <- map_data("state")
-for (k in 2:10) {
-  tc.info$cluster <- as.factor(kmeans(select(tc.info, temperature:FY),
-                           k)$cluster)
-  plt <- ggplot(filter(tc.info, lon > -130), aes(lon, lat, color=cluster)) +
-    geom_polygon(aes(long, lat, group=group), data=states, color="grey",
-               fill=NA, size=2) +
-    geom_point(size=2) +
-    scale_color_viridis_d() +
-    theme_std() +
-    labs(
-      x="Longitude",
-      y="Latitude",
-      color="Seasonality\nTemporal Trend\nCluster"
-    )
-  write.img(plt, paste0("Figures/RiverTrendClusters/Clusters_k", k))
-}
-```
-
-
-### By Elevation Bucket
-
-This reveals distinctive trends.  For example, at high elevation:
-
-- Amplitude has been roughly constant.  Lower elevations saw a dip around 1995
-and then recovery.
-- Temperature has also been roughly constant.  It has increased for the bottom ~60%.
-- The fall low has weakened, but only for the highest elevations.
-- The spring low has gotten stronger and a little earlier for the highest elevations.
-- The summer high has grown slightly, while at lower elevations it has generally
-shrunk a bit.
-- The winter high has weakened slightly for most elevations.
-
-```{r warning=FALSE}
-window <- 5  # years
-trends <- datats %>%
-  bucketize("elev", "m", 10) %>%
-  group_by(StartYr) %>%
-  group_modify(~{
-    .x %>%
-      group_by(BucketName, Date, day) %>%
-      summarize(
-        temperature = median(temperature)
-      ) %>%
-      group_by(BucketName, day) %>%
-      arrange(Date) %>%
-      mutate(
-        temperature = zoo::rollmean(temperature, window, fill=NA, align="right")
-      ) %>%
-      ungroup() %>%
-      drop_na() %>%
-      group_by(BucketName, Year = as.integer(format(Date, "%Y"))) %>%
-      arrange(Date) %>%
-      group_modify(\(z, w) safely(\(x) normalize.sins(
-        mutate(
-          fit.sins(x),
-          temperature = mean(x$temperature)
-        )
-      ),
-                           otherwise=tibble())(z)$result, .keep=TRUE) %>%
-      drop_na()
-  })
-```
-
-```{r}
-plt <- trends %>%
-  pivot_longer(c(Intercept, Amplitude, FallWinter, SpringSummer),
-               names_to="Aspect",
-               values_to="Value") %>%
-  ggplot(aes(Year, Value, color=as.factor(StartYr))) +
-  geom_line(size=2) +
-  # geom_smooth(size=2, se=F) +
-  scale_color_viridis_d() +
-  facet_grid(Aspect ~ BucketName, switch="y", scales="free_y",
-             labeller=labeller(Aspect=as_labeller(renamer))) +
-  theme_std() +
-  scale_x_continuous(breaks=c(2000, 2020)) +
-  theme(legend.position = "bottom") +
-  labs(
-    x="End Year",
-    y=NULL,
-    color="Start Year"
-  )
-# print(plt + theme_std(12))
-write.img(plt, "Figures/ElevationBucketTrends")
-```
-
-
-### US
-
-For the USA as a whole:
-
-- Temperature has been gradually increasing.
-- Amplitude has been increasing after a sharp drop in the 1990s.
-- The fall low has been getting a bit stronger.
-- The spring low has been variable and small.
-- The summer high has been variable and small.
-- The winter high has been weakening consistently.
-
-```{r}
-window <- 5  # years
-trends <- datats %>%
-  group_by(StartYr, Date, day) %>%
-  summarize(temperature = median(temperature)) %>%
-  group_by(StartYr, day) %>%
-  arrange(Date) %>%
-  mutate(
-    temperature = zoo::rollmean(temperature, window, fill=NA, align="right")
-  ) %>%
-  ungroup() %>%
-  drop_na() %>%
-  group_by(StartYr, Year = as.integer(format(Date, "%Y"))) %>%
-  arrange(Date) %>%
-  group_modify(~safely(fit.sins, otherwise=tibble())(.)$result, .keep=TRUE)
-```
-
-```{r}
-plt <- trends %>%
-  pivot_longer(c(Intercept, Amplitude, SpringSummer, FallWinter),
-               names_to="Aspect",
-               values_to="Value") %>%
-  ggplot(aes(Year, Value, color=as.factor(StartYr))) +
-  scale_color_viridis_d(end=0.9) +
-  geom_line(size=4) +
-  # geom_smooth(size=2, color="red", linetype="dashed", se=F) +
-  facet_wrap(~Aspect, nrow=1, strip.position = "left", scales="free_y",
-             labeller=as_labeller(renamer.nn)) +
-  theme_std() +
-  theme(legend.position = "bottom") +
-  labs(
-    x="End Year",
-    y=NULL,
-    color="Start Year"
-  )
-print(plt + theme_std(12))
-write.img(plt, "Figures/USATrendsx3", height=2)
-```
-
-#### US by Grid Cell
-
-Note: add *n* to legend and convert plots to be anomaly relative to 1994.
-
-```{r}
-plotpts <- datats %>%
-  filter(StartYr == 1990, Year == 1994) %>%
-  left_join(tg, by=c("id"="site_no")) %>%
-  group_by(id) %>%
-  slice_head(n=1)
-
-plot.eco() +
-  geom_point(aes(lon, lat), data=plotpts, color="yellow")
-```
-
-
-```{r}
-window <- 5  # years
-trends <- datats %>%
-  filter(StartYr == 1990) %>%
-  left_join(tg, by=c("id"="site_no")) %>%
-  group_by(LonGrp = 10 * floor(lon/10),
-           # LatGrp = 10 * floor(lat/10)
-           ) %>%
-  mutate(N = length(unique(id))) %>%
-  # filter(LonGrp %in% c(-100, -130)) %>%
-  group_by(StartYr, Date, day,
-           # LatGrp = 10 * floor(lat/10),
-           LonGrp,
-           # LatGrp,
-           N) %>%
-  summarize(temperature = median(temperature, na.rm=T)) %>%
-  group_by(StartYr, day,
-           # LatGrp,
-           LonGrp,
-           # LatGrp
-           ) %>%
-  arrange(Date) %>%
-  mutate(
-    temperature = zoo::rollmean(temperature, window, fill=NA, align="right")
-  ) %>%
-  ungroup() %>%
-  drop_na() %>%
-  group_by(StartYr, Year = as.integer(format(Date, "%Y")),
-           # LatGrp,
-           LonGrp,
-           # LatGrp,
-           N
-           ) %>%
-  arrange(Date) %>%
-  group_modify(~safely(fit.sins, otherwise=tibble())(.)$result, .keep=TRUE) %>%
-  group_by(LonGrp
-           # ,LatGrp
-           ) %>%
-  mutate(Has1994 = 1994 %in% Year) %>%
-  ungroup() %>%
-  filter(Has1994)
-```
-
-```{r}
-plt <- trends %>%
-  pivot_longer(c(Intercept, Amplitude, SpringSummer, FallWinter),
-               names_to="Aspect",
-               values_to="Value") %>%
-  group_by(Aspect, LonGrp
-           # ,LatGrp
-           ) %>%
-  arrange(Year) %>%
-  mutate(Value = Value - first(Value)) %>%
-  ggplot(aes(Year, Value, color=as.factor(-LonGrp),
-             size=N)) +
-  scale_color_viridis_d(end=0.9) +
-  scale_size_continuous(range=c(2,8), breaks=c(1, 1:5*10)) +
-  geom_line(alpha=0.8) +
-  # geom_smooth(size=2, color="red", linetype="dashed", se=F) +
-  facet_wrap(~Aspect, nrow=2, strip.position = "left", scales="free_y",
-             labeller=as_labeller(renamer.nn)) +
-  theme_std() +
-  guides(color=guide_legend(override.aes = list(size=12))) +
-  theme(legend.position = "bottom") +
-  labs(
-    x="End Year",
-    y="Anomaly Relative to 1994",
-    color="Longitude Group (West Edge; deg W)",
-    size="Gage Count"
-  )
-print(plt + theme_std(12))
-write.img(plt, "Figures/USATrendsLon")
-```
-
-#### Texas Test
-
-```{r}
-datats %>%
-  left_join(tg, by=c("id"="site_no")) %>%
-  filter(lon > -105,
-         lon < -95,
-         lat < 35) %>%
-  group_by(StartYr,
-           Year) %>%
-  summarize(temperature = median(temperature)) %>%
-  ggplot(aes(Year, temperature, color=as.factor(StartYr))) +
-  theme_bw() +
-  geom_line()
-```
-
-
 # Case Study Validation
-
-## Temporal Trends
-
-### USA: 2000 dataset, 2010-2020, autumn (315) down/winter (40) up 0.4 C
-
-```{r}
-datats %>%
-  group_by(StartYr, Year, day) %>%
-  summarize(temperature = mean(temperature)) %>%
-  group_by(StartYr, day) %>%
-  arrange(Year) %>%
-  mutate(temperature = zoo::rollmean(temperature, 5, fill=NA, align="right")) %>%
-  ungroup() %>%
-  filter(StartYr == 2000, Year %in% c(2010, 2020), day %in% c(40, 315)) %>%
-  group_by(Year, day) %>%
-  summarize(temperature = mean(temperature))
-```
-
-
-### 60% Elevation: 2000 dataset, 2010-2020, spring (130) down/summer (215) up 0.8 C
-
-```{r}
-datats %>%
-  bucketize("elev", "m", 10) %>%
-  filter(Bucket == 60) %>%
-  group_by(StartYr, Year, day) %>%
-  summarize(temperature = mean(temperature)) %>%
-  group_by(StartYr, day) %>%
-  arrange(Year) %>%
-  mutate(temperature = zoo::rollmean(temperature, 5, fill=NA, align="right")) %>%
-  ungroup() %>%
-  filter(StartYr == 2000, Year %in% c(2010, 2020), day %in% c(130, 215)) %>%
-  group_by(Year, day) %>%
-  summarize(temperature = mean(temperature))
-```
-
-## Spatial Trends
 
 Based on strength/weakness of spsu and aw anomalies, divergences from sinusoid
 should be obvious for western Montana and northern Maine, but negligible for Florida.
@@ -1569,16 +1173,18 @@ plt <- ggplot(rfit, aes(day)) +
              stroke=NA) +
   geom_line(aes(y=Fit, color="Sinusoid"), size=4) +
   geom_line(aes(y=Mean, color="Mean"), size=2) +
-  facet_wrap(~Region, nrow=1, scales="free_y") +
+  facet_wrap(~Region, nrow=1) +
   scale_color_viridis_d() +
   theme_std() +
-  theme(legend.position = "bottom") +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size=30),
+        strip.text = element_text(size=30)) +
   labs(
     x="Day of Year",
     y="Region Mean Temperature",
     color=NULL
   )
-write.img(plt, "Figures/GeoValidation", height=3)
+write.img(plt, "Figures/GeoValidation_c", height=3)
 ```
 
 # Temporal Cross-Validation
@@ -1608,24 +1214,30 @@ cv <- data %>%
               te <- filter(cvdat, Index == ix) %>% select(-Index)
               model <- fit.sins(tr)
               days <- 1:366
-              modout <- tibble(day=days,
-                               Sinusoid=model$Intercept + model$Amplitude * cos((days - 210) * 2 * pi / 365),
-                               Anomaly=make.sints(model)$actemp)
-              left_join(te,
-                        modout,
-                        by="day")
+              if (nrow(drop_na(model)) > 0) {
+                modout <- tibble(day=days,
+                                 Sinusoid=model$Intercept + model$Amplitude * cos((days - 210) * 2 * pi / 365),
+                                 Anomaly=make.sints(model)$actemp)
+                left_join(te,
+                          modout,
+                          by="day")
+              } else {
+                tibble()
+              }
             })
   })
 ```
 ```{r}
 perf <- cv %>%
+  drop_na() %>%
   group_by(id) %>%
   summarize(
     across(c(da, elev), first),
     across(c(Sinusoid, Anomaly),
     ~cor(.x, temperature)^2
   )) %>%
-  mutate(Delta = Anomaly - Sinusoid)
+  mutate(Delta = Anomaly - Sinusoid) %>%
+  drop_na()
 
 perf %>%
   select(Sinusoid, Anomaly, Delta) %>%

@@ -1,0 +1,5 @@
+This repository contains analysis code  used to develop an analysis of stream seasonal thermal regimes in the United States.  The R Notebook, `analysis.Rmd`, will reproduce all supporting analysis and generate figures when run with the data files downloaded into a `Data` subdirectory of the working directory.  `analysis.Rmd` calls more involved functions from `functions.R`.  The knitted version of the notebook is also included as `analysis.pdf`.
+
+To run the Notebook, in the working directory there must be a `Data` directory containing the data files and a `Figures` directory with a `MovingWindowSeasons` subdirectory, where figures will be stored.  For map generation, `functions.R` will also look for an EPA Level I Ecoregions (https://gaftp.epa.gov/EPADataCommons/ORD/Ecoregions/cec_na/na_cec_eco_l1.zip) shapefile in an `Ecoregions` directory.
+
+The required data can be downloaded from [Hydroshare](http://www.hydroshare.org/resource/7d960b7fdfee480895fd845bade1b75a).
