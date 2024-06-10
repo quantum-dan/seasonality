@@ -8,6 +8,8 @@ The stream seasonal thermal regime - i.e., long-term seasonal behavior of stream
 
 ## Usage
 
+The R version is just available as source code; simply download and `source` the file `functions.R`.  The Python version is available on the Python Package Index as `rtseason` and can be installed from pip: `pip install rtseason`.
+
 This applies to both Python and R.  There are two key functions for the end user: `fit.sins` (R) / `fit_sins` (Python) and `make.sints` (R) / `make_sints` (Python).
 
 The `fit.sins` function accepts as its main argument a data frame containing columns for `day` (day of year, as an integer) and `temperature` (observed temperature).  This data frame may be day-of-year means already, but it can also be an observed timeseries with multiple entries per day (e.g., by date over several years).  The function will compute day-of-year means.  Observations must be available for at least 180 days.  The R version has several other arguments that were used for generating data for the paper but can be left as default by the end user.
