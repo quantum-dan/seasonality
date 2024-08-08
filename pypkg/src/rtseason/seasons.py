@@ -60,7 +60,9 @@ def get_anom_date(day, anom, direction, default, dmin=-1, dmax=999):
     Identify the peak date of the anomaly in question, over the dataset
     day and anom (must be the same length).
     Date is bounded between dmin, dmax.
-    Direction is either np.min (negative anomaly) or np.max (positive anomaly).
+    Direction is np.min (negative anomaly) or np.max (positive anomaly). It can
+    also be None, which allows the script to choose a direction based on mean
+    anomaly.
     """
     if len(day) != len(anom):
         raise ValueError("Days and anomalies must have the same length")
@@ -71,6 +73,11 @@ def get_anom_date(day, anom, direction, default, dmin=-1, dmax=999):
     ely = anom[el]
     # Now pick the day with the strongest anomaly (or the mean of
     # candidate days)
+    if direction is None:
+        if ely.mean() > 0:
+            direction = np.max
+        else:
+            direction = np.min
     return np.mean(eld[ely == direction(ely)]) \
         if len(eld) > 0 else default
 
@@ -108,11 +115,23 @@ class ThreeSine(object):
             RMSE=coefs["RMSE"].iloc[0] if "RMSE" in coefs else None
         )
 
-    def from_data(data):
-        inp = data.dropna().groupby("day").mean("temperature").\
+    def from_data(data, allow_direction=False, warn=True):
+        """
+        data: data frame with day and temperature
+        warn:
+            if True, raise a warning and return None if insufficient data.
+            if False, throw an error.
+        allow_direction: allow the direction for dates (see `get_anom_date`)
+            to be identified internally vs requiring defaults.
+        """
+        inp = data.groupby("day").mean("temperature").dropna().\
             sort_values("day")
         if inp.shape[0] < 180:
-            raise ValueError("Insufficient data coverage for 3-sine fit; >=180 days required")
+            if warn:
+                raise Warning("Insufficient data coverage for 3-sine fit; >=180 days required")
+                return None
+            else:
+                raise ValueError("Insufficient data coverage for 3-sine fit; >=180 days required")
         day = inp.index.to_numpy()
         Ts = inp["temperature"].to_numpy()
         index = np.cos((day - 210) * 2 * np.pi / 365)
@@ -128,10 +147,11 @@ class ThreeSine(object):
         # Use a rolling mean (centered) to find zeroes and peaks
         rolled = rollmean_circ(anomaly, 31)
         # Now we start computing seasonal terms; this form applies for each day
-        fallt = get_anom_date(day, rolled, np.min, 330, dmin=300)
-        wint = get_anom_date(day, rolled, np.max, 80, dmax=110)
-        spt = get_anom_date(day, rolled, np.min, 160, dmin=120, dmax=180)
-        sumt = get_anom_date(day, rolled, np.max, 220, dmin=200, dmax=240)
+        allower = lambda f: None if allow_direction else f
+        fallt = get_anom_date(day, rolled, allower(np.min), 330, dmin=300)
+        wint = get_anom_date(day, rolled, allower(np.max), 80, dmax=110)
+        spt = get_anom_date(day, rolled, allower(np.min), 160, dmin=120, dmax=180)
+        sumt = get_anom_date(day, rolled, allower(np.max), 220, dmin=200, dmax=240)
         # Next, compute width and domain of sine functions
         (sin1, sin2) = make_trunc_sins(day, spt, sumt, fallt, wint)
         # Now create the full best fit
@@ -149,9 +169,8 @@ class ThreeSine(object):
         tsfit.RMSE = rmse
         return tsfit
         
-
-    def to_df(self):
-        return pd.DataFrame({
+    def to_dict(self):
+        return {
             "Intercept": self.Intercept,
             "Amplitude": self.Amplitude,
             "FallDay": self.FallDay,
@@ -162,7 +181,10 @@ class ThreeSine(object):
             "FallWinter": self.FallWinter,
             "R2": self.R2,
             "RMSE": self.RMSE
-            },
+            }
+
+    def to_df(self):
+        return pd.DataFrame(self.to_dict(),
             index=pd.Series([0]))
 
     def generate_ts(self):

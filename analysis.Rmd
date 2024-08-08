@@ -201,10 +201,11 @@ plt <- bucketize(data, "elev", "m", 10) %>%
   arrange(day) %>%
   mutate(temp = stats::filter(temp, rep(1/30, 30), circular=TRUE)) %>%
   ggplot() +
-  aes(day, temp, color=BucketName) +
+  aes(day, temp, color=BucketName, linetype=BucketName) +
   geom_line(size=2) +
   scale_color_viridis_d(option="magma", end=0.8) +
   scale_x_continuous(breaks=30*(0:12)) +
+  scale_linetype(guide="none") +
   theme_std(size=36) +
   theme(legend.position = "bottom",
         axis.text = element_text(size=30),

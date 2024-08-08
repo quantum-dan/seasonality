@@ -1,4 +1,4 @@
-from rtseason import *
+from rtseason import fit_sins
 import pandas as pd
 
 
@@ -22,6 +22,7 @@ def test_fit(data, fit):
     so it tests both aspects.
     """
     new_fit = fit_sins(data)
+    pd.set_option('display.max_columns', 10)
     print("Fit comparison (new then reference):")
     print(new_fit)
     print(fit)

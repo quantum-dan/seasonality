@@ -487,7 +487,7 @@ validate.gages <- function(glist,
 
 states <- map_data("state")
 eco.raw <- if(!exists("eco.raw")) {
-  st_read(".Ecoregions/NA_CEC_Eco_Level1.shp", quiet=TRUE)
+  st_read("Ecoregions/NA_CEC_Eco_Level1.shp", quiet=TRUE)
 } else eco.raw
 
 plot.eco <- function(akhi=F, vir.random=F, legrow=3) {
