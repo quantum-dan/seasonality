@@ -6,6 +6,7 @@ function wrappers to replicate the R interface.
 
 import pandas as pd
 import numpy as np
+import warnings
 
 
 def apply_sin(days, start, domain):
@@ -128,7 +129,7 @@ class ThreeSine(object):
             sort_values("day")
         if inp.shape[0] < 180:
             if warn:
-                raise Warning("Insufficient data coverage for 3-sine fit; >=180 days required")
+                warnings.warn("Insufficient data coverage for 3-sine fit; >=180 days required")
                 return None
             else:
                 raise ValueError("Insufficient data coverage for 3-sine fit; >=180 days required")

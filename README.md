@@ -32,4 +32,20 @@ The required data can be downloaded from [Hydroshare](http://www.hydroshare.org/
 
 ## Citation
 
-The three-sine approach implemented here is introduced and analyzed in the paper ``Improved Annual Temperature Cycle Function for Stream Seasonal Thermal Regimes'' (Philippus, Corona and Hogue 2024), currently in review.  Citation information will be added upon acceptance.
+The three-sine approach implemented here is introduced and analyzed in the paper: "Improved Annual Temperature Cycle Function for Stream Seasonal Thermal Regimes" (Philippus, Corona and Hogue 2024), in JAWRA.
+
+(Note: as of this writing, the paper has been accepted but is not yet available online, so the link won't work yet.)
+
+Link: https://doi.org/10.1111/1752-1688.13228
+
+Citation BibTeX:
+
+```
+@article{,
+    title = {Improved Annual Temperature Cycle Function for Stream Seasonal Thermal Regimes},
+    journal = {Journal of the American Water Resources Association},
+    doi = {10.1111/1752-1688.13228},
+    year = {2024},
+    author = {Philippus, Daniel and Corona, Claudia R. and Hogue, Terri S.}
+}
+```
