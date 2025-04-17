@@ -82,6 +82,20 @@ def get_anom_date(day, anom, direction, default, dmin=-1, dmax=999):
     return np.mean(eld[ely == direction(ely)]) \
         if len(eld) > 0 else default
 
+def generate_ts(Intercept, Amplitude, SpringSummer, FallWinter,
+                SpringDay, SummerDay, FallDay, WinterDay):
+    days = np.arange(1, 367, 1, dtype="int")
+    index = np.cos((days - 210) * 2 * np.pi / 365)
+
+    (sin1, sin2) = make_trunc_sins(days, SpringDay,
+                                   SummerDay,
+                                   FallDay,
+                                   WinterDay)
+
+    series = Intercept + Amplitude * index + \
+        FallWinter * sin1 + SpringSummer * sin2
+    return series
+
 
 class ThreeSine(object):
     def __init__(self,
@@ -190,27 +204,9 @@ class ThreeSine(object):
 
     def generate_ts(self):
         days = np.arange(1, 367, 1, dtype="int")
-        index = np.cos((days - 210) * 2 * np.pi / 365)
-
-        # sin1width = round(((self.WinterDay - self.FallDay) % 365)/2)
-        # sin1dom = np.concatenate((
-        #     np.arange(self.FallDay - sin1width, 367, 1),
-        #     np.arange(1, self.WinterDay + sin1width + 1, 1)))
-
-        # sin2width = round((self.SummerDay - self.SpringDay)/2)
-        # sin2dom = np.arange(self.SpringDay - sin2width,
-        #                     self.SummerDay + sin2width + 1,
-        #                     1)
-
-        # sin1 = -apply_sin(days, self.FallDay - sin1width, sin1dom)
-        # sin2 = -apply_sin(days, self.SpringDay - sin2width, sin2dom)
-        (sin1, sin2) = make_trunc_sins(days, self.SpringDay,
-                                       self.SummerDay,
-                                       self.FallDay,
-                                       self.WinterDay)
-
-        series = self.Intercept + self.Amplitude * index + \
-            self.FallWinter * sin1 + self.SpringSummer * sin2
+        series = generate_ts(self.Intercept, self.Amplitude, self.SpringSummer,
+                             self.FallWinter, self.SpringDay, self.SummerDay,
+                             self.FallDay, self.WinterDay)
         return pd.DataFrame({"day": days, "actemp": series})
 
 

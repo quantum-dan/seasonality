@@ -973,7 +973,7 @@ plt_map <- ggplot(nona, aes(lon, lat, fill=cluster.names[Cluster])) +
   geom_polygon(aes(long, lat, group=group), data=states, color="black",
                  fill=NA, size=2) +
   scale_fill_viridis_d(option="plasma", end=0.8) +
-  theme_std() +
+  theme_std(size = 48) +
   theme(legend.position = "bottom") +
   labs(
     x="Longitude",
@@ -1025,7 +1025,7 @@ plt_box <- nona %>%
              labeller = as_labeller(renamer),
              strip.position = "left") +
   labs(y=NULL, x="Cluster") +
-  theme_vert() +
+  theme_vert(48) +
   guides(color="none")
 write.img(plt_box, "Figures/MovingWindowSeasons/ClusterBoxDates")
 ```
@@ -1033,7 +1033,7 @@ write.img(plt_box, "Figures/MovingWindowSeasons/ClusterBoxDates")
 ```{r}
 plt_map <- plt_map + theme_std(32)
 # aligned <- align_plots(plt_box, plt_map, axis="br")
-aligned <- ggdraw(plt_box) + draw_plot(plt_map, x=0.4, width=0.6, height=0.4)
+aligned <- ggdraw(plt_box) + draw_plot(plt_map, x=0.35, width=0.65, height=0.43)
 write.img(aligned, "Figures/MovingWindowSeasons/ClusterWithInset")
 ```
 
@@ -1050,8 +1050,8 @@ elev <- data %>%
   summarize(
     across(-id,
            list(
-             "median" = median,
-             "outliers" = ~sum(abs((.x - mean(.x)) / sd(.x)) >= 3)
+             "median" = ~median(.x, na.rm=T),
+             "outliers" = ~sum(abs((.x - mean(.x, na.rm=T)) / sd(.x, na.rm=T)) >= 3, na.rm=T)
            )),
     outliers = Intercept_outliers | Amplitude_outliers | FallWinter_outliers | SpringSummer_outliers,
     N = n()
@@ -1105,15 +1105,18 @@ outliers <- elev %>%
 plt <- elev %>%
   pivot_longer(c(Intercept, Amplitude, FallWinter, SpringSummer)) %>%
   ggplot(aes(elev, value, shape=N < 10, group=1)) +
-  geom_point(size=4) +
-  geom_point(aes(elev, value, shape=N < 10, color=Which), data=outliers, size=8) +
-  scale_color_viridis_d(end=0.9, guide=guide_legend(nrow=3,
+  geom_point(size=8) +
+  geom_point(aes(elev, value, shape=N < 10, color=Which), data=outliers, size=16) +
+  scale_color_discrete(type=c("black", "orange", "green", "purple"), guide=guide_legend(nrow=4,
                                                     title.position = "top",
                                                     override.aes = list(shape=17))) +
+  # scale_color_viridis_d(end=0.9, guide=guide_legend(nrow=3,
+  #                                                   title.position = "top",
+  #                                                   override.aes = list(shape=17))) +
   geom_smooth(size=2, method="lm", se=T) +
   facet_wrap(~name, scales="free_y", labeller = as_labeller(renamer),
              strip.position = "left", nrow=2) +
-  theme_std() +
+  theme_std(40) +
   theme(legend.position = "bottom") +
   labs(
     x="Elevation (m)",
@@ -1180,6 +1183,7 @@ plt <- ggplot(rfit, aes(day)) +
   theme(legend.position = "bottom",
         legend.text = element_text(size=30),
         strip.text = element_text(size=30)) +
+  scale_x_continuous(expand=c(0, 0), breaks=0:6*60) +
   labs(
     x="Day of Year",
     y="Region Mean Temperature",
@@ -1275,11 +1279,13 @@ not continuous values.
 ```{r}
 plt <- ggplot(tg, aes(x=tslen / 365)) +
   stat_ecdf(size=4) +
-  scale_y_continuous(sec.axis = sec_axis(~.*nrow(tg), name="Gage Count")) +
-  theme_std() +
+  scale_y_continuous(sec.axis = sec_axis(~.*nrow(tg)/1000, name="Gage Count (1000s)")) +
+  theme_bw(16) +
+  scale_x_continuous(expand=c(0, 0)) +
   labs(x="Gage Timeseries Length (years)",
        y="Cumulative Probability")
-write.img(plt, "Figures/GageECDF", width=4)
+# write.img(plt, "Figures/GageECDF", width=4)
+ggsave("Figures/GageECDF.png", bg="white", dpi=1200, width=5, height=5.5)
 ```
 
 
@@ -1327,17 +1333,22 @@ data <- left_join(data,
 ```{r}
 plt <- ggplot(data, aes(day)) +
   geom_point(aes(y=temperature, color="Observations"),
-             alpha=0.1, stroke=NA, size=2) +
-  geom_line(aes(y=actemp, color="Three-Sine"), size=2) +
-  geom_line(aes(y=tsin, color="Sine"), size=2) +
-  scale_color_viridis_d(end=0.8) +
-  theme_std() +
+             alpha=0.1, stroke=NA, size=1) +
+  geom_line(aes(y=actemp, color="Three-Sine"), size=1) +
+  geom_line(aes(y=tsin, color="Sine"), size=1, linetype="dashed") +
+  # scale_color_viridis_d(end=0.8) +
+  scale_x_continuous(expand=c(0,0), breaks=0:6*60) +
+  scale_y_continuous(breaks=0:8*2) +
+  scale_color_discrete(type = c("grey", "black", "orange")) +
+  theme_bw(16) +
+  theme(legend.position = c(0.25,0.92)) +
   labs(
     x="Day of Year",
     y="Gage Temperature (C)\n(Arkansas River at Granite, CO)",
     color=NULL
   )
-write.img(plt, "Figures/ArkansasDemo", width=4)
+# write.img(plt, "Figures/ArkansasDemo", width=4)
+ggsave("Figures/ArkansasDemo.png", width=4, height=5.5, bg="white", dpi=1200)
 ```
 
 ## Conceptual Diagram
