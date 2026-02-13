@@ -9,12 +9,24 @@ import numpy as np
 import warnings
 
 
-def apply_sin(days, start, domain):
+def apply_sin(days: np.ndarray, start: int, domain: np.ndarray) -> np.ndarray:
     """
     Apply a truncated sine function, starting from start, within domain
-    days: array of days to apply to
-    start: integer start day
-    domain: array of integer days containing domain
+
+    Parameters
+    ----------
+    days : np.ndarray
+        array of days to apply to
+    start : int
+        integer start day
+    domain : np.ndarray
+        array of integer days containing domain
+
+    Returns
+    -------
+    np.ndarray
+        Result sine curve with amplitude 1 and mean 0
+
     """
     return np.sin(((days - start) % 365) * 2 * np.pi / len(domain)) * \
         np.array([day in domain for day in days])
@@ -130,18 +142,22 @@ class ThreeSine(object):
             RMSE=coefs["RMSE"].iloc[0] if "RMSE" in coefs else None
         )
 
-    def from_data(data, allow_direction=False, warn=True):
+    def from_data(data, allow_direction=False, warn=True, silent=False):
         """
         data: data frame with day and temperature
         warn:
             if True, raise a warning and return None if insufficient data.
             if False, throw an error.
+        silent:
+            if True, apply warn above but don't warn
         allow_direction: allow the direction for dates (see `get_anom_date`)
             to be identified internally vs requiring defaults.
         """
-        inp = data.groupby("day").mean("temperature").dropna().\
+        inp = data.groupby("day", as_index=False)["temperature"].mean().dropna().\
             sort_values("day")
         if inp.shape[0] < 180:
+            if silent:
+                return None
             if warn:
                 warnings.warn("Insufficient data coverage for 3-sine fit; >=180 days required")
                 return None
@@ -177,14 +193,14 @@ class ThreeSine(object):
         tsfit = ThreeSine(meant, amplitude, fallt, wint, fw, spt, sumt, ssu)
         # Get performance statistics
         pred = tsfit.generate_ts()
-        comb = pred.join(inp, on="day")
+        comb = pred.merge(inp, on="day")
         r2 = np.corrcoef(comb["actemp"], comb["temperature"])[0,1]**2
         rmse = np.sqrt(np.mean((comb["actemp"] - comb["temperature"])**2))
         tsfit.R2 = r2
         tsfit.RMSE = rmse
         return tsfit
         
-    def to_dict(self):
+    def to_dict(self, with_gof=True):
         return {
             "Intercept": self.Intercept,
             "Amplitude": self.Amplitude,
@@ -193,10 +209,10 @@ class ThreeSine(object):
             "SpringDay": self.SpringDay,
             "SummerDay": self.SummerDay,
             "SpringSummer": self.SpringSummer,
-            "FallWinter": self.FallWinter,
+            "FallWinter": self.FallWinter} | ({
             "R2": self.R2,
             "RMSE": self.RMSE
-            }
+            } if with_gof else {})
 
     def to_df(self):
         return pd.DataFrame(self.to_dict(),
